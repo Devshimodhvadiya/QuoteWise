@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─────────────────────────────────────────
+    // Helper functions
+    // ─────────────────────────────────────────
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'admin';
+    }
+
+    function isSameCompany(companyId) {
+      return isAuthenticated() && getUserData().companyName == companyId;
+    }
+
+    // ─────────────────────────────────────────
+    // Users collection
+    // ─────────────────────────────────────────
+    match /users/{uid} {
+      // Users can read their own profile; admins can read all profiles in their company
+      allow read: if isOwner(uid) || (isAuthenticated() && isAdmin() && resource.data.companyName == getUserData().companyName);
+
+      // Users can create their own profile (during registration)
+      allow create: if isOwner(uid) && request.resource.data.role == 'employee';
+
+      // Users can update their own non-role fields
+      allow update: if isOwner(uid) && !('role' in request.resource.data.diff(resource.data).affectedKeys());
+
+      // Admins can update role for users in the same company
+      allow update: if isAdmin()
+        && resource.data.companyName == getUserData().companyName
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']);
+
+      // No deletion allowed through client
+      allow delete: if false;
+    }
+
+    // ─────────────────────────────────────────
+    // Requirements collection
+    // ─────────────────────────────────────────
+    match /requirements/{requirementId} {
+      allow read: if isAuthenticated() && isSameCompany(resource.data.companyId);
+
+      allow create: if isAuthenticated()
+        && request.resource.data.companyId == getUserData().companyName
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if isAuthenticated()
+        && resource.data.companyId == getUserData().companyName
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+
+      allow delete: if isAuthenticated()
+        && resource.data.companyId == getUserData().companyName
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+    }
+
+    // ─────────────────────────────────────────
+    // Vendors collection
+    // ─────────────────────────────────────────
+    match /vendors/{vendorId} {
+      allow read: if isAuthenticated() && isSameCompany(resource.data.companyId);
+
+      allow create: if isAuthenticated()
+        && request.resource.data.companyId == getUserData().companyName;
+
+      allow update: if isAuthenticated()
+        && resource.data.companyId == getUserData().companyName
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+
+      allow delete: if isAuthenticated()
+        && resource.data.companyId == getUserData().companyName
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+    }
+
+    // ─────────────────────────────────────────
+    // Quotations collection
+    // ─────────────────────────────────────────
+    match /quotations/{quotationId} {
+      allow read: if isAuthenticated() && isSameCompany(resource.data.companyId);
+
+      allow create: if isAuthenticated()
+        && request.resource.data.companyId == getUserData().companyName
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if isAuthenticated()
+        && resource.data.companyId == getUserData().companyName
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+
+      allow delete: if isAuthenticated()
+        && resource.data.companyId == getUserData().companyName
+        && (resource.data.createdBy == request.auth.uid || isAdmin());
+    }
+
+    // ─────────────────────────────────────────
+    // Comparisons collection
+    // ─────────────────────────────────────────
+    match /comparisons/{comparisonId} {
+      allow read: if isAuthenticated() && isSameCompany(resource.data.companyId);
+
+      allow create: if isAuthenticated()
+        && request.resource.data.companyId == getUserData().companyName
+        && request.resource.data.createdBy == request.auth.uid;
+
+      // Comparisons are immutable once saved (read-only after creation)
+      allow update: if false;
+      allow delete: if isAdmin() && resource.data.companyId == getUserData().companyName;
+    }
+  }
+}
